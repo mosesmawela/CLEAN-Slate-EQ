@@ -1,8 +1,8 @@
-node_modules/
-build/
-dist/
-coverage/
-.DS_Store
+/.vs/
+/build/
+/out/
 *.log
-.env*
-!.env.example
+cmake_log.txt
+test.cpp
+/web_backup/
+/CLEAN_Slate_EQ_artefacts/
