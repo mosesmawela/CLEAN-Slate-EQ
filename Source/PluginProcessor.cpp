@@ -268,11 +268,17 @@ void CleanSlateAudioProcessor::updateFilters ()
         float q = bandStates[i].q;
         float gain = bandStates[i].gain;
         float slope = bandStates[i].slope;
+        float attack = bandStates[i].attack / 1000.0f; // convert to seconds
+        float release = bandStates[i].release / 1000.0f;
+        float threshold = bandStates[i].threshold;
+        float ratio = bandStates[i].ratio;
+        bool isDynamic = bandStates[i].dynamic > 0;
+        int charMode = (int)characterMode;
 
-        filtersL[i].setParameters (freq, q, gain, surgType, (int) slope);
-        filtersR[i].setParameters (freq, q, gain, surgType, (int) slope);
-        filtersM[i].setParameters (freq, q, gain, surgType, (int) slope);
-        filtersS[i].setParameters (freq, q, gain, surgType, (int) slope);
+        filtersL[i].setParameters (freq, q, gain, surgType, (int)slope, threshold, ratio, attack, release, isDynamic, charMode);
+        filtersR[i].setParameters (freq, q, gain, surgType, (int)slope, threshold, ratio, attack, release, isDynamic, charMode);
+        filtersM[i].setParameters (freq, q, gain, surgType, (int)slope, threshold, ratio, attack, release, isDynamic, charMode);
+        filtersS[i].setParameters (freq, q, gain, surgType, (int)slope, threshold, ratio, attack, release, isDynamic, charMode);
     }
 
     phaseMode = (PhaseMode) treeState.getRawParameterValue ("phaseMode")->load ();
@@ -352,39 +358,41 @@ void CleanSlateAudioProcessor::processWithZeroLatency (juce::AudioBuffer<float>&
             juce::dsp::ProcessContextReplacing<float> ctxL (blockL);
             juce::dsp::ProcessContextReplacing<float> ctxR (blockR);
 
-            if (bandStates[i].mode == 3)
+            if (bandStates[i].mode == 3) // Mid
             {
                 filtersM[i].process (ctxL);
             }
-            else if (bandStates[i].mode == 4)
+            else if (bandStates[i].mode == 4) // Side
             {
                 filtersS[i].process (ctxR);
             }
-            else if (bandStates[i].mode == 1)
+            else if (bandStates[i].mode == 1) // Left
             {
                 filtersL[i].process (ctxL);
             }
-            else if (bandStates[i].mode == 2)
+            else if (bandStates[i].mode == 2) // Right
             {
                 filtersR[i].process (ctxR);
             }
-            else
+            else // Stereo (Mode 0)
             {
-                filtersL[i].process (ctxL);
-                filtersR[i].process (ctxR);
+                juce::dsp::AudioBlock<float> stereoBlock (bufferChannels, 2, 1);
+                stereoBlock.setSample (0, 0, leftSample);
+                stereoBlock.setSample (1, 0, rightSample);
+                juce::dsp::ProcessContextReplacing<float> ctxStereo (stereoBlock);
+                filtersL[i].process (ctxStereo);
+                leftSample = stereoBlock.getSample (0, 0);
+                rightSample = stereoBlock.getSample (1, 0);
             }
-
-            processDynamicEQ (i, (float) currentSampleRate, &bandLeft, &bandRight);
 
             if (bandStates[i].mode == 1)
                 leftSample = bandLeft;
             else if (bandStates[i].mode == 2)
                 rightSample = bandRight;
-            else
-            {
+            else if (bandStates[i].mode == 3)
                 leftSample = bandLeft;
+            else if (bandStates[i].mode == 4)
                 rightSample = bandRight;
-            }
         }
 
         if (useMS)
@@ -457,9 +465,10 @@ void CleanSlateAudioProcessor::calculateScopeData ()
 
     getFFTMagnitudes (scopeData);
 
+    // Apply Tilt (±6dB/oct)
     if (tiltAmount != 0.0f)
     {
-        for (int i = 0; i < scopeSize; ++i)
+        for (int i = 1; i < scopeSize; ++i)
         {
             float freq = (float) i * currentSampleRate / (2.0f * fftSize);
             float octaves = std::log2 (freq / 1000.0f);
@@ -467,12 +476,13 @@ void CleanSlateAudioProcessor::calculateScopeData ()
         }
     }
 
+    // Peak Hold & Decay
     for (int i = 0; i < scopeSize; ++i)
     {
         if (scopeData[i] > peakHoldData[i])
         {
             peakHoldData[i] = scopeData[i];
-            peakHoldCounter[i] = 30;
+            peakHoldCounter[i] = 40; // ~1 second @ 60fps
         }
         else if (peakHoldCounter[i] > 0)
         {
@@ -480,7 +490,7 @@ void CleanSlateAudioProcessor::calculateScopeData ()
         }
         else
         {
-            peakHoldData[i] *= 0.95f;
+            peakHoldData[i] *= 0.985f; // Smooth decay
         }
     }
 
@@ -492,42 +502,82 @@ void CleanSlateAudioProcessor::findHarshResonances ()
     if (treeState.getRawParameterValue ("resKill")->load () < 0.5f)
         return;
 
-    float fftResult[scopeSize];
-    getFFTMagnitudes (fftResult);
+    // Use current scope data to find peaks
+    const float noiseFloor = juce::Decibels::decibelsToGain (-60.0f);
+    const float peakSensitivity = 1.25f; // Multiplier above neighbors
 
-    float threshold = 0.8f;
-    for (int i = 5; i < scopeSize - 5; ++i)
+    for (int i = 10; i < scopeSize - 10; ++i)
     {
-        if (fftResult[i] > threshold && fftResult[i] > fftResult[i - 1] && fftResult[i] > fftResult[i + 1])
+        float val = scopeData[i];
+        if (val < noiseFloor) continue;
+
+        // Check if it's a prominent local peak
+        if (val > scopeData[i - 1] * peakSensitivity && val > scopeData[i + 1] * peakSensitivity)
         {
-            float freq = (float) i * (currentSampleRate / (2.0f * scopeSize));
+            float freq = (float) i * (currentSampleRate / (2.0f * fftSize));
+            
+            // Look for an inactive band to "kill" this resonance
             for (int b = 0; b < 8; ++b)
             {
-                if (! bandStates[b].active)
+                juce::String id = "band" + juce::String (b);
+                if (treeState.getRawParameterValue (id + "_active")->load () < 0.5f)
                 {
-                    juce::String id = "band" + juce::String (b);
                     treeState.getRawParameterValue (id + "_freq")->store (freq);
-                    treeState.getRawParameterValue (id + "_gain")->store (-6.0f);
-                    treeState.getRawParameterValue (id + "_q")->store (4.0f);
-                    treeState.getRawParameterValue (id + "_type")->store (3.0f);
+                    treeState.getRawParameterValue (id + "_gain")->store (-9.0f); // Surgical cut
+                    treeState.getRawParameterValue (id + "_q")->store (8.0f);    // High Q notch
+                    treeState.getRawParameterValue (id + "_type")->store (3.0f); // Notch
                     treeState.getRawParameterValue (id + "_active")->store (1.0f);
                     break;
                 }
             }
+            i += 50; // Gap between detections
         }
     }
 }
 
 void CleanSlateAudioProcessor::captureReference ()
 {
-    getFFTMagnitudes (referenceSpectrum);
+    // Deep copy current peak-held or smoothed spectrum to reference
+    std::memcpy (referenceSpectrum, scopeData, sizeof (scopeData));
     referenceCaptured = true;
 }
 
 void CleanSlateAudioProcessor::applyEqMatch ()
 {
     if (! referenceCaptured) return;
-    getFFTMagnitudes (scopeData);
+    
+    // 1. Reset bands first
+    for (int i = 0; i < 8; ++i)
+    {
+        juce::String id = "band" + juce::String (i);
+        treeState.getRawParameterValue (id + "_active")->store (0.0f);
+        treeState.getRawParameterValue (id + "_gain")->store (0.0f);
+    }
+    
+    // 2. Find significant differences in 8 key frequency regions
+    const float freqs[8] = { 60.0f, 150.0f, 400.0f, 1000.0f, 2500.0f, 5000.0f, 10000.0f, 16000.0f };
+    
+    for (int b = 0; b < 8; ++b)
+    {
+        int fftBin = (int)(freqs[b] * (2.0f * fftSize) / currentSampleRate);
+        fftBin = juce::jlimit (0, scopeSize - 1, fftBin);
+        
+        float currentVal = scopeData[fftBin];
+        float targetVal = referenceSpectrum[fftBin];
+        
+        float diffDb = juce::Decibels::gainToDecibels (targetVal) - juce::Decibels::gainToDecibels (currentVal);
+        diffDb = juce::jlimit (-18.0f, 18.0f, diffDb); // Constraint
+        
+        if (std::abs (diffDb) > 1.0f) // Only if significant
+        {
+            juce::String id = "band" + juce::String (b);
+            treeState.getRawParameterValue (id + "_freq")->store (freqs[b]);
+            treeState.getRawParameterValue (id + "_gain")->store (diffDb);
+            treeState.getRawParameterValue (id + "_q")->store (1.0f);
+            treeState.getRawParameterValue (id + "_type")->store (1.0f); // Peak
+            treeState.getRawParameterValue (id + "_active")->store (1.0f);
+        }
+    }
 }
 
 void CleanSlateAudioProcessor::createBandsFromSketch (const std::vector<std::pair<float, float>>& points)
