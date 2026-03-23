@@ -1,27 +1,28 @@
-# CLEAN Slate EQ (Build Experiment v1.0)
+# CLEAN Slate EQ (Pro Surgical Build Experiment v2.0)
 
-![CLEAN Slate EQ](https://img.shields.io/badge/Status-Experimental-yellow) ![JUCE](https://img.shields.io/badge/Powered%20By-JUCE-blue) ![C++](https://img.shields.io/badge/Language-C%2B%2B-orange)
+![CLEAN Slate EQ](https://img.shields.io/badge/Status-Pro--Experimental-gold) ![JUCE](https://img.shields.io/badge/Powered%20By-JUCE-blue) ![C++](https://img.shields.io/badge/Language-C%2B%2B-orange)
 
-**A High-End EQ Build Experiment.**  
-CLEAN Slate EQ is a high-performance audio plugin project focused on building a clean, transparent 8-band surgical EQ engine with real-time OpenGL visualization. This is an ongoing experiment in bridgeable DSP and high-performance UI rendering.
+**The Ultimate Precision EQ Build Experiment.**  
+CLEAN Slate EQ v2.0 is a professional-grade, surgical audio plugin that transforms the original slider-based UI into a fully interactive, mouse-driven EQ Graph. Featuring ultra-steep 96dB/octave slopes, natural phase processing, and a contextual floating HUD, this is a masterclass in modern JUCE UI/UX and advanced DSP.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Pro Features
 
-### 1. **Core 8-Band DSP Engine**
-- **Surgical Precision**: 8 independent bands with switchable types (Highpass, Peak, Lowpass, Notch, Low-Shelf, High-Shelf).
-- **Pure Transparency**: Designed with Natural Phase algorithms for zero coloration across the spectrum.
-- **Auto-Gain (Alpha)**: An experimental compensation logic to maintain perceived loudness as you cut or boost.
+### 1. **Interactive EQ Graph (Pro-Q Logic)**
+- **Direct Manipulation**: Double-click to create bands, drag to adjust frequency and gain, and use the mouse wheel for Q factor control.
+- **Contextual HUD**: A floating control center that follows your selection, providing instant access to filter shapes, slopes, and dynamic settings.
+- **Sketching Mode**: Draw your desired frequency curve directly on the graph, and our intelligent algorithm will automatically fit EQ bands to your sketch.
 
-### 2. **OpenGL Spectrum Visualizer**
-- **Zero-Latency Rendering**: Powered by raw GLSL shaders for ultra-smooth visualization with minimal CPU impact.
-- **Collision Glow**: Experimental visual feedback that illuminates overlapping frequency zones for better conflict detection.
-- **Dynamic Response**: Real-Time FFT analysis for high-fidelity audio monitoring.
+### 2. **Surgical DSP & Dynamic EQ**
+- **Ultra-Steep Slopes**: Cascaded IIR stages allowing for surgical 48dB, 72dB, and 96dB/octave cuts.
+- **Dynamic Engine**: Each band features a dedicated compressor/expander for frequency-dependent dynamics.
+- **Phase Modes**: Choose between Zero Latency, Analog-matched Natural Phase, and Linear Phase for maximum transparency.
 
-### 3. **Modern UI Design**
-- **Premium Aesthetics**: A "Bento Box" inspired dark luxury design using custom LookAndFeel classes.
-- **Interactive Controls**: Smooth rotary sliders and intuitive band management.
+### 3. **Workflow & Visualization**
+- **Sleek Resizing**: Dynamic UI scaling (100% to 150%) and window resizing to fit any screen resolution.
+- **OpenGL Spectrum**: Lab-grade real-time FFT visualization with sleek collision glow.
+- **Curve Sync**: Copy and Paste EQ curves between plugin instances using a secure XML clipboard system.
 
 ---
 

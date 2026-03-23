@@ -41,6 +41,7 @@ target_sources(CLEAN_Slate_EQ PRIVATE
     Source/PluginEditor.cpp
     Source/PluginEditor.h
     Source/Presets.h
+    Source/SurgicalFilter.h
 )
 
 # Link to JUCE modules
