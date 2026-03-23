@@ -45,7 +45,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAttachment, gainAttachment, qAttachment;
 
     juce::TextButton bandButtons[8];
-    juce::TextButton resKillButton { "RES-KILL" }, smartLearnButton { "SMART LEARN" };
+    juce::TextButton resKillButton { "RES-KILL (SOON)" }, smartLearnButton { "SMART LEARN (SOON)" };
     juce::TextButton monoSubButton { "MONO SUB" }, phaseFlipButton { "Ø" };
 
     juce::ComboBox presetSelector;
