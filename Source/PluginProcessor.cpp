@@ -460,6 +460,10 @@ void CleanSlateAudioProcessor::updateFilters ()
     // Handle analog modeling
     analogModel = (int)treeState.getRawParameterValue ("analogModel")->load ();
 
+    // Update phase mode
+    int pmValue = (int)treeState.getRawParameterValue ("phaseMode")->load ();
+    phaseMode = (pmValue >= 0 && pmValue <= 2) ? (PhaseMode)pmValue : PhaseMode::ZeroLatency;
+
     if (treeState.getRawParameterValue ("autoGain")->load () > 0.5f)
     {
         float totalBoosts = std::max (0.0f, totalBoost);
@@ -492,16 +496,6 @@ void CleanSlateAudioProcessor::processWithZeroLatency (juce::AudioBuffer<float>&
     {
         float leftSample = leftData[sample];
         float rightSample = isMono ? leftSample : rightData[sample];
-
-        bool useMS = false;
-        for (int i = 0; i < 8; ++i)
-        {
-            if (bandStates[i].mode == 3 || bandStates[i].mode == 4)
-            {
-                useMS = true;
-                break;
-            }
-        }
 
         if (useMS)
             encodeMS (&leftSample, &rightSample);
@@ -1106,16 +1100,6 @@ void CleanSlateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             dryRight[i] = wetRight[i];
         }
     }
-
-    // Handle M/S solo
-    midSolo = (treeState.getRawParameterValue ("midSolo")->load () > 0.5f);
-    sideSolo = (treeState.getRawParameterValue ("sideSolo")->load () > 0.5f);
-    
-    // Handle spectrum view mode
-    spectrumViewMode = (int)treeState.getRawParameterValue ("spectrumView")->load ();
-    
-    // Handle analog modeling
-    analogModel = (int)treeState.getRawParameterValue ("analogModel")->load ();
 
     // FIX #13: Validate channel count before processing
     if (buffer.getNumChannels() >= 2)
