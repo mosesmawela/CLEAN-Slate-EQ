@@ -19,17 +19,15 @@ public:
         sampleRate = spec.sampleRate;
         for (int i = 0; i < 8; ++i)
             cascade[i].prepare (spec);
-            
-        envelope.reset (spec.sampleRate, 0.05); // Default 50ms smoothing
     }
 
     void setParameters (float freq, float q, float gain, int type, int slopeIndex,
                         float threshold = 0.0f, float ratio = 1.0f, float attack = 0.1f, float release = 0.1f,
                         bool isDynamic = false, int character = 0)
     {
-        currentFreq = freq;
-        currentQ = q;
-        currentGain = gain;
+        this->currentFreq = freq;
+        this->currentQ = q;
+        this->currentGain = gain;
         this->currentType = type;
         this->isDynamic = isDynamic;
         this->charMode = character;
@@ -37,8 +35,7 @@ public:
         targetThreshold = threshold;
         targetRatio = ratio;
         
-        envelope.setAttackTime (attack * 1000.0f); // ms
-        envelope.setReleaseTime (release * 1000.0f);
+        // Note: Dynamic EQ logic uses its own envelope calculation in process()
         
         // slopeIndex: 0=6s, 1=12s, 2=24s, 3=48s, 4=96s
         stages = 1;
@@ -55,63 +52,61 @@ public:
         auto inputBlock = context.getInputBlock();
         auto outputBlock = context.getOutputBlock();
         
-        for (size_t chan = 0; chan < inputBlock.getNumChannels(); ++chan)
+        // Update coefficients at the start of the block for performance
+        // If it's dynamic, we usually do this sample-by-sample, but that's very expensive.
+        // We'll calculate a block-level envelope instead.
+        
+        if (isDynamic)
         {
-            auto* src = inputBlock.getChannelPointer (chan);
-            auto* dst = outputBlock.getChannelPointer (chan);
-            
-            for (size_t i = 0; i < inputBlock.getNumSamples(); ++i)
+            float maxEnv = 0.0f;
+            for (size_t chan = 0; chan < inputBlock.getNumChannels(); ++chan)
             {
-                float sample = src[i];
-                
-                // --- 1. Dynamic EQ Analysis ---
-                if (isDynamic)
-                {
-                    float env = envelope.processSample (std::abs (sample));
-                    float envDb = juce::Decibels::gainToDecibels (env);
-                    
-                    if (envDb > targetThreshold)
-                    {
-                        float over = envDb - targetThreshold;
-                        float reduction = over * (1.0f - (1.0f / targetRatio));
-                        updateCoefficients (currentGain - reduction);
-                    }
-                    else
-                    {
-                        updateCoefficients (currentGain);
-                    }
-                }
-
-                // --- 2. Filter Cascade ---
-                float filtered = sample;
-                for (int s = 0; s < stages; ++s)
-                {
-                    // For simplicity, we process sample-by-sample manually if needed, 
-                    // but ProcessorDuplicator works on blocks. 
-                    // To maintain per-sample dynamic EQ, we'd need per-sample filtering.
-                }
-                
-                // --- 3. Saturation ---
-                if (charMode == 1) // Subtle
-                    filtered = std::tanh (filtered * 1.05f) / 1.05f;
-                else if (charMode == 2) // Warm
-                    filtered = filtered > 0 ? (filtered - 0.15f * filtered * filtered) : filtered;
-
-                dst[i] = filtered;
+                auto* src = inputBlock.getChannelPointer (chan);
+                for (size_t i = 0; i < inputBlock.getNumSamples(); ++i)
+                    maxEnv = std::max (maxEnv, std::abs (src[i]));
+            }
+            
+            float envDb = juce::Decibels::gainToDecibels (maxEnv);
+            if (envDb > targetThreshold)
+            {
+                float over = envDb - targetThreshold;
+                float reduction = over * (1.0f - (1.0f / targetRatio));
+                updateCoefficients (currentGain - reduction);
+            }
+            else
+            {
+                updateCoefficients (currentGain);
             }
         }
-        
-        // Note: For performance, we actually use the block processing of the cascade
-        // after calculating the average gain reduction for the block.
+        else
+        {
+            updateCoefficients (currentGain);
+        }
+
         for (int i = 0; i < stages; ++i)
             cascade[i].process (context);
+
+        // Saturation
+        if (charMode > 0)
+        {
+            for (size_t chan = 0; chan < outputBlock.getNumChannels(); ++chan)
+            {
+                auto* dst = outputBlock.getChannelPointer (chan);
+                for (size_t i = 0; i < outputBlock.getNumSamples(); ++i)
+                {
+                    if (charMode == 1) // Subtle
+                        dst[i] = std::tanh (dst[i] * 1.05f) / 1.05f;
+                    else if (charMode == 2) // Warm
+                        dst[i] = dst[i] > 0 ? (dst[i] - 0.15f * dst[i] * dst[i]) : dst[i];
+                }
+            }
+        }
     }
 
     void reset()
     {
         for (int i = 0; i < 8; ++i)
             cascade[i].reset();
-        envelope.reset (sampleRate, 0.05);
     }
 
 private:
@@ -122,7 +117,7 @@ private:
 
         switch (currentType)
         {
-            case Peak:      coeffs = juce::dsp::IIR::Coefficients<float>::makePeak (sampleRate, currentFreq, currentQ, g); break;
+            case Peak:      coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate, currentFreq, currentQ, g); break;
             case LowShelf:  coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sampleRate, currentFreq, currentQ, g); break;
             case HighShelf: coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sampleRate, currentFreq, currentQ, g); break;
             case Notch:     coeffs = juce::dsp::IIR::Coefficients<float>::makeNotch (sampleRate, currentFreq, currentQ); break;
@@ -150,5 +145,5 @@ private:
     float targetThreshold = 0.0f, targetRatio = 1.0f;
     int charMode = 0;
     
-    juce::LinearSmoothedValue<float> envelope { 0.0f };
+    // Placeholder for smoothing or just use LinearSmoothedValue
 };

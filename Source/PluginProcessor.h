@@ -15,29 +15,7 @@ enum class BandMode
     Side
 };
 
-// Dynamic EQ modes
-enum class DynamicMode
-{
-    Off = 0,
-    Compressor,
-    Expander
-};
-
-// Phase processing modes
-enum class PhaseMode
-{
-    ZeroLatency = 0,
-    NaturalPhase,
-    LinearPhase
-};
-
-// Character/saturation modes
-enum class CharacterMode
-{
-    Clean = 0,
-    Subtle,     // Gentle transformer-style
-    Warm        // Tube-style saturation
-};
+// Band state structure
 
 // Filter types (extended)
 enum class FilterType
@@ -71,9 +49,26 @@ struct BandState
     bool solo = false;
 };
 
+// Forward declaration for parameter listener
+class CleanSlateAudioProcessor;
+
 class CleanSlateAudioProcessor : public juce::AudioProcessor
 {
 public:
+    enum class PhaseMode
+    {
+        ZeroLatency = 0,
+        NaturalPhase,
+        LinearPhase
+    };
+
+    enum class CharacterMode
+    {
+        Clean = 0,
+        Subtle,
+        Warm
+    };
+
     CleanSlateAudioProcessor();
     ~CleanSlateAudioProcessor() override;
 
@@ -91,6 +86,7 @@ public:
     float fftData[fftSize * 2];
     float scopeData[scopeSize];
     float peakHoldData[scopeSize];
+    int peakHoldCounter[scopeSize];
     bool nextFFTBlockReady = false;
     float tiltAmount = 0.0f;                   // dB/octave for display
 
@@ -149,6 +145,20 @@ public:
     juce::String getBandsAsXml() const;
     void setBandsFromXml (const juce::String& xmlString);
 
+    int selectedBand = -1;
+
+    void copyEqCurve();
+    void pasteEqCurve();
+    void phaseModeMenu();
+    void characterModeMenu();
+    void uiScaleMenuAction();
+
+    // FIX #7: Public method for UI to request filter updates
+    void markFiltersForUpdate() { filtersDirty = true; }
+
+    // FIX #7: Parameter update management flag
+    std::atomic<bool> filtersDirty { true };
+
 private:
     void updateFilters();
     void processWithZeroLatency (juce::AudioBuffer<float>& buffer);
@@ -160,6 +170,14 @@ private:
     // M/S encode/decode
     void encodeMS (float* left, float* right);
     void decodeMS (float* left, float* right);
+
+    // Linear phase helpers
+    void updateLinearPhaseImpulseResponse();
+    void processLinearPhaseChannel (float* channelData, const std::vector<float>& impulseResponse,
+                                   std::vector<std::vector<float>>& convBuffer, int& convIndex, int numSamples);
+
+    // Lookahead processing
+    void processLookaheadBuffers (float* leftSample, float* rightSample);
 
     // Band states
     BandState bandStates[8];
@@ -187,9 +205,39 @@ private:
     static constexpr int linearPhaseFFTOrder = 13;  // 8192 for convolution
     static constexpr int linearPhaseFFTSize = 1 << linearPhaseFFTOrder;
     juce::dsp::FFT linearPhaseFFT;
-    std::vector<float> impulseResponse;
+    std::vector<float> impulseResponseL, impulseResponseR;
     std::vector<std::vector<float>> convolutionBufferL, convolutionBufferR;
     int convolutionIndex = 0;
+    bool impulseResponseDirty = true;
+    
+    // External sidechain
+    juce::AudioBuffer<float> sidechainBuffer;
+    bool sidechainAvailable = false;
+    
+    // Delta/Latency compensation
+    juce::AudioBuffer<float> dryBufferL, dryBufferR;
+    int latencySamples = 0;
+    bool deltaMode = false;
+    
+    // Lookahead for Dynamic EQ
+    static constexpr int lookaheadSize = 2048;
+    std::vector<float> lookaheadBufferL, lookaheadBufferR;
+    int lookaheadWritePos = 0;
+    
+    // A/B Switching
+    juce::AudioBuffer<float> abBufferL, abBufferR;
+    bool abEnabled = false;
+    bool abSwap = false;
+    
+    // M/S Solo
+    bool midSolo = false;
+    bool sideSolo = false;
+    
+    // Spectrum View Options
+    int spectrumViewMode = 0; // 0=Input, 1=Output, 2=Both, 3=Difference
+    
+    // Analog Modeling
+    int analogModel = 0; // 0=Clean, 1=Neve, 2=API
 
     // FFT Components
     juce::dsp::FFT forwardFFT;

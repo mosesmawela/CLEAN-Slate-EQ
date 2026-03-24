@@ -269,10 +269,11 @@ void EqGraphComponent::mouseDoubleClick (const juce::MouseEvent& e)
             processor.treeState.getParameter ("band" + juce::String (i) + "_freq")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (i) + "_freq").convertTo0to1 (getFreqForX (e.position.x)));
             processor.treeState.getParameter ("band" + juce::String (i) + "_gain")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (i) + "_gain").convertTo0to1 (getGainForY (e.position.y)));
             processor.treeState.getParameter ("band" + juce::String (i) + "_active")->setValueNotifyingHost (1.0f);
-            
+
             if (auto* editor = dynamic_cast<CleanSlateAudioProcessorEditor*>(getParentComponent()))
                 editor->selectedBand = i;
-            
+
+            processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
             repaint();
             return;
         }
@@ -306,13 +307,14 @@ void EqGraphComponent::mouseDrag (const juce::MouseEvent& e)
 {
     if (isSketching)
     {
-        sketchPoints.add (e.position);
+        sketchPoints.push_back (e.position);
         repaint();
     }
     else if (draggingBand != -1)
     {
         processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_freq")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_freq").convertTo0to1 (getFreqForX (e.position.x)));
         processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_gain")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_gain").convertTo0to1 (getGainForY (e.position.y)));
+        processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
         repaint();
     }
 }
@@ -325,6 +327,7 @@ void EqGraphComponent::mouseWheelMove (const juce::MouseEvent& e, const juce::Mo
         float currentQ = processor.treeState.getRawParameterValue ("band" + juce::String (hoveredBand) + "_q")->load();
         float newQ = juce::jlimit (0.1f, 10.0f, currentQ + d.deltaY * 0.5f);
         qParam->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (hoveredBand) + "_q").convertTo0to1 (newQ));
+        processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
         repaint();
     }
 }
@@ -371,12 +374,13 @@ void EqGraphComponent::mouseUp (const juce::MouseEvent& e)
 void EqGraphComponent::finishSketch()
 {
     if (sketchPoints.size() < 10) return;
-    
+
     std::vector<std::pair<float, float>> points;
     for (auto p : sketchPoints)
         points.push_back ({ getFreqForX (p.x), getGainForY (p.y) });
-        
+
     processor.createBandsFromSketch (points);
+    processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
 }
 
 CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioProcessor& p)
@@ -389,20 +393,40 @@ CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioP
     hud.setAlpha (0.95f);
     hud.setVisible (false);
 
-    // Dynamic Controls & New Buttons
-    for (auto* b : { &copyButton, &pasteButton, &eqMatchButton, &referenceButton, &phaseModeButton, &characterButton, &sketchButton })
-        addAndMakeVisible (b);
+     // Dynamic Controls & New Buttons
+     for (auto* b : { &copyButton, &pasteButton, &eqMatchButton, &referenceButton, &phaseModeButton, &characterButton, &sketchButton, &deltaModeButton, &sidechainButton, &lookaheadButton })
+         addAndMakeVisible (b);
 
-    sketchButton.setClickingTogglesState (true);
-    sketchButton.onClick = [this] { graph.isSketching = sketchButton.getToggleState(); };
+     sketchButton.setClickingTogglesState (true);
+     sketchButton.onClick = [this] { graph.isSketching = sketchButton.getToggleState(); };
 
-    copyButton.onClick = [this] { copyEqCurve(); };
-    pasteButton.onClick = [this] { pasteEqCurve(); };
-    
-    phaseModeButton.onClick = [this] { phaseModeMenu(); };
-    characterButton.onClick = [this] { characterModeMenu(); };
+     copyButton.onClick = [this] { copyEqCurve(); };
+     pasteButton.onClick = [this] { pasteEqCurve(); };
 
-    // Resizing Logic
+     phaseModeButton.onClick = [this] { phaseModeMenu(); };
+     characterButton.onClick = [this] { characterModeMenu(); };
+     
+     deltaModeButton.onClick = [this] { 
+         float currentState = audioProcessor.treeState.getRawParameterValue ("deltaMode")->load();
+         bool newState = currentState <= 0.5f;
+         audioProcessor.treeState.getParameter ("deltaMode")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
+         deltaModeButton.setButtonText (newState ? "DELTA ON" : "DELTA");
+     };
+
+     sidechainButton.onClick = [this] { 
+         float currentState = audioProcessor.treeState.getRawParameterValue ("externalSidechain")->load();
+         bool newState = currentState <= 0.5f;
+         audioProcessor.treeState.getParameter ("externalSidechain")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
+         sidechainButton.setButtonText (newState ? "SIDECHAIN ON" : "SIDECHAIN");
+     };
+     
+     lookaheadButton.onClick = [this] { 
+         bool newState = (audioProcessor.treeState.getRawParameterValue ("lookahead")->load () <= 0.5f);
+         audioProcessor.treeState.getParameter ("lookahead")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
+         lookaheadButton.setButtonText (newState ? "LOOKAHEAD ON" : "LOOKAHEAD");
+     };
+
+     // Resizing Logic
     setResizable (true, true);
     setResizeLimits (600, 400, 2000, 1200);
     // getConstrainer()->setFixedAspectRatio (1.53); // Optional: keep aspect ratio
@@ -416,8 +440,6 @@ CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioP
     
     presetSelector.setSelectedItemIndex (0, juce::dontSendNotification);
     presetSelector.onChange = [this] { audioProcessor.loadPreset (presetSelector.getSelectedItemIndex()); };
-
-    presetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(audioProcessor.treeState, "preset", presetSelector);
 
     for (int i = 0; i < 8; ++i)
     {
@@ -451,7 +473,7 @@ CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioP
     setSize (1000, 650);
     startTimerHz (60);
     
-    uiScaleButton.onClick = [this] { uiScaleMenu(); };
+    uiScaleButton.onClick = [this] { showUiScaleMenu(); };
 }
 
 CleanSlateAudioProcessorEditor::~CleanSlateAudioProcessorEditor()
@@ -496,9 +518,12 @@ void CleanSlateAudioProcessorEditor::pasteEqCurve()
 void CleanSlateAudioProcessorEditor::phaseModeMenu()
 {
     juce::PopupMenu m;
-    m.addItem (1, "Zero Latency", true, audioProcessor.phaseMode == CleanSlateAudioProcessor::PhaseMode::ZeroLatency);
-    m.addItem (2, "Natural Phase", true, audioProcessor.phaseMode == CleanSlateAudioProcessor::PhaseMode::NaturalPhase);
-    m.addItem (3, "Linear Phase", true, audioProcessor.phaseMode == CleanSlateAudioProcessor::PhaseMode::LinearPhase);
+    float phaseValue = audioProcessor.treeState.getRawParameterValue ("phaseMode")->load();
+    int phaseIdx = static_cast<int>(phaseValue * 2.0f);
+
+    m.addItem (1, "Zero Latency", true, phaseIdx == 0);
+    m.addItem (2, "Natural Phase", true, phaseIdx == 1);
+    m.addItem (3, "Linear Phase", true, phaseIdx == 2);
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (phaseModeButton), [this] (int result) {
         if (result > 0) audioProcessor.treeState.getParameter ("phaseMode")->setValueNotifyingHost ((result - 1) / 2.0f);
@@ -509,9 +534,12 @@ void CleanSlateAudioProcessorEditor::phaseModeMenu()
 void CleanSlateAudioProcessorEditor::characterModeMenu()
 {
     juce::PopupMenu m;
-    m.addItem (1, "Clean", true, audioProcessor.characterMode == CleanSlateAudioProcessor::CharacterMode::Clean);
-    m.addItem (2, "Subtle (Transformer)", true, audioProcessor.characterMode == CleanSlateAudioProcessor::CharacterMode::Subtle);
-    m.addItem (3, "Warm (Tube)", true, audioProcessor.characterMode == CleanSlateAudioProcessor::CharacterMode::Warm);
+    float charValue = audioProcessor.treeState.getRawParameterValue ("characterMode")->load();
+    int charIdx = static_cast<int>(charValue * 2.0f);
+
+    m.addItem (1, "Clean", true, charIdx == 0);
+    m.addItem (2, "Subtle (Transformer)", true, charIdx == 1);
+    m.addItem (3, "Warm (Tube)", true, charIdx == 2);
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (characterButton), [this] (int result) {
         if (result > 0) audioProcessor.treeState.getParameter ("characterMode")->setValueNotifyingHost ((result - 1) / 2.0f);
@@ -519,7 +547,7 @@ void CleanSlateAudioProcessorEditor::characterModeMenu()
     });
 }
 
-void CleanSlateAudioProcessorEditor::uiScaleMenu()
+void CleanSlateAudioProcessorEditor::showUiScaleMenu()
 {
     juce::PopupMenu m;
     m.addItem (1, "100%", true, currentScale == 1.0f);
@@ -536,7 +564,9 @@ void CleanSlateAudioProcessorEditor::uiScaleMenu()
             uiScaleButton.setButtonText (juce::String (int (currentScale * 100)) + "%");
         }
     });
+}
 void CleanSlateAudioProcessorEditor::paint (juce::Graphics& g)
+{
     // Minimalist Luxury Background
     g.fillAll (juce::Colour (0xFF050505));
 
@@ -560,14 +590,17 @@ void CleanSlateAudioProcessorEditor::resized()
     uiScaleButton.setBounds (topBar.removeFromRight (80).reduced (10, 25));
     
     // Pro Button Row in Top Bar
-    auto proBtnArea = topBar.removeFromRight (400).reduced (0, 25);
-    int pW = proBtnArea.getWidth() / 5;
+    auto proBtnArea = topBar.removeFromRight (600).reduced (0, 25);
+    int pW = proBtnArea.getWidth() / 8;
     sketchButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
     copyButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
     pasteButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
     phaseModeButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
-    characterButton.setBounds (proBtnArea.reduced (2, 0));
-
+    characterButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
+    deltaModeButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
+    sidechainButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
+    lookaheadButton.setBounds (proBtnArea.removeFromLeft (pW).reduced (2, 0));
+    
     auto bottomBar = area.removeFromBottom (100);
     
     auto aiArea = bottomBar.removeFromRight (250);
@@ -577,18 +610,18 @@ void CleanSlateAudioProcessorEditor::resized()
     auto matchArea = bottomBar.removeFromLeft (180);
     eqMatchButton.setBounds (matchArea.removeFromTop (45).reduced (5, 2));
     referenceButton.setBounds (matchArea.removeFromTop (45).reduced (5, 2));
-
+    
     auto bentoArea = bottomBar.removeFromLeft (120);
     monoSubButton.setBounds (bentoArea.removeFromTop (45).reduced (5, 2));
     phaseFlipButton.setBounds (bentoArea.removeFromTop (45).reduced (5, 2));
-
+    
     auto bandArea = bottomBar.reduced (5, 10);
     int btnWidth = bandArea.getWidth() / 8;
     for (int i = 0; i < 8; ++i)
         bandButtons[i].setBounds (bandArea.removeFromLeft (btnWidth).reduced (2, 5));
-
+    
     graph.setBounds (area.reduced (10));
-
+    
     // Position Mini-HUD under selected node
     if (selectedBand != -1)
     {
@@ -603,6 +636,8 @@ void CleanSlateAudioProcessorEditor::resized()
     {
         hud.setVisible (false);
     }
+    
+    updateButtonStates(); // Update button states after layout changes
 }
 
 void CleanSlateAudioProcessorEditor::timerCallback()
@@ -662,66 +697,31 @@ void CleanSlateAudioProcessorEditor::openGLContextClosing()
     shader.reset();
 }
 
-void CleanSlateAudioProcessorEditor::copyEqCurve()
-{
-    juce::SystemClipboard::copyTextToClipboard (audioProcessor.getBandsAsXml());
-}
-
-void CleanSlateAudioProcessorEditor::pasteEqCurve()
-{
-    auto xmlString = juce::SystemClipboard::getTextFromClipboard();
-    audioProcessor.setBandsFromXml (xmlString);
-}
-
-void CleanSlateAudioProcessorEditor::phaseModeMenu()
-{
-    juce::PopupMenu menu;
-    menu.addItem (1, "Zero Latency", true, audioProcessor.getPhaseMode() == PhaseMode::ZeroLatency);
-    menu.addItem (2, "Natural Phase", true, audioProcessor.getPhaseMode() == PhaseMode::NaturalPhase);
-    menu.addItem (3, "Linear Phase", true, audioProcessor.getPhaseMode() == PhaseMode::LinearPhase);
-
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (phaseModeButton),
-        [this] (int result)
-        {
-            if (result > 0)
-            {
-                audioProcessor.setPhaseMode ((PhaseMode) (result - 1));
-                phaseModeButton.setButtonText (result == 1 ? "Zero Latency" : result == 2 ? "Natural Phase" : "Linear Phase");
-            }
-        });
-}
-
-void CleanSlateAudioProcessorEditor::characterModeMenu()
-{
-    juce::PopupMenu menu;
-    menu.addItem (1, "Clean", true, audioProcessor.getCharacterMode() == CharacterMode::Clean);
-    menu.addItem (2, "Subtle", true, audioProcessor.getCharacterMode() == CharacterMode::Subtle);
-    menu.addItem (3, "Warm", true, audioProcessor.getCharacterMode() == CharacterMode::Warm);
-
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (characterButton),
-        [this] (int result)
-        {
-            if (result > 0)
-            {
-                audioProcessor.setCharacterMode ((CharacterMode) (result - 1));
-                characterButton.setButtonText (result == 1 ? "Clean" : result == 2 ? "Subtle" : "Warm");
-            }
-        });
-}
-
 void CleanSlateAudioProcessorEditor::updateButtonStates()
 {
-    switch (audioProcessor.getPhaseMode())
+    auto phaseMode = audioProcessor.getPhaseMode();
+    switch (phaseMode)
     {
-        case PhaseMode::ZeroLatency: phaseModeButton.setButtonText ("Zero Latency"); break;
-        case PhaseMode::NaturalPhase: phaseModeButton.setButtonText ("Natural Phase"); break;
-        case PhaseMode::LinearPhase: phaseModeButton.setButtonText ("Linear Phase"); break;
+        case CleanSlateAudioProcessor::PhaseMode::ZeroLatency: phaseModeButton.setButtonText ("Zero Latency"); break;
+        case CleanSlateAudioProcessor::PhaseMode::NaturalPhase: phaseModeButton.setButtonText ("Natural Phase"); break;
+        case CleanSlateAudioProcessor::PhaseMode::LinearPhase: phaseModeButton.setButtonText ("Linear Phase"); break;
     }
 
-    switch (audioProcessor.getCharacterMode())
+    auto charMode = audioProcessor.getCharacterMode();
+    switch (charMode)
     {
-        case CharacterMode::Clean: characterButton.setButtonText ("Clean"); break;
-        case CharacterMode::Subtle: characterButton.setButtonText ("Subtle"); break;
-        case CharacterMode::Warm: characterButton.setButtonText ("Warm"); break;
+        case CleanSlateAudioProcessor::CharacterMode::Clean: characterButton.setButtonText ("Clean"); break;
+        case CleanSlateAudioProcessor::CharacterMode::Subtle: characterButton.setButtonText ("Subtle"); break;
+        case CleanSlateAudioProcessor::CharacterMode::Warm: characterButton.setButtonText ("Warm"); break;
     }
+
+    // Update new feature buttons
+    float deltaValue = audioProcessor.treeState.getRawParameterValue ("deltaMode")->load();
+    deltaModeButton.setButtonText (deltaValue > 0.5f ? "DELTA ON" : "DELTA");
+
+    float sidechainValue = audioProcessor.treeState.getRawParameterValue ("externalSidechain")->load();
+    sidechainButton.setButtonText (sidechainValue > 0.5f ? "SIDECHAIN ON" : "SIDECHAIN");
+
+    float lookaheadValue = audioProcessor.treeState.getRawParameterValue ("lookahead")->load();
+    lookaheadButton.setButtonText (lookaheadValue > 0.5f ? "LOOKAHEAD ON" : "LOOKAHEAD");
 }

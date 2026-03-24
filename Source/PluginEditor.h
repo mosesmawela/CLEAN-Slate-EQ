@@ -89,6 +89,18 @@ public:
     void copyEqCurve();
     void pasteEqCurve();
 
+    int selectedBand = -1;
+    float currentScale = 1.0f;
+
+    // UI Scaling
+    juce::PopupMenu uiScaleMenu;
+    juce::TextButton uiScaleButton { "100%" };
+    
+    void phaseModeMenu();
+    void characterModeMenu();
+    void showUiScaleMenu();
+    void uiScaleMenuAction();
+
 private:
     CleanSlateAudioProcessor& audioProcessor;
     PremiumLookAndFeel premiumLookAndFeel;
@@ -111,26 +123,24 @@ private:
     juce::Slider tiltSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tiltAttachment;
 
-    int selectedBand = -1;
-    float currentScale = 1.0f;
-
     // Buttons
     juce::TextButton bandButtons[8];
     juce::TextButton resKillButton { "RES-KILL" };
     juce::TextButton smartLearnButton { "SMART LEARN" };
     juce::TextButton monoSubButton { "MONO SUB" };
-    juce::TextButton phaseFlipButton { "Ø" };
-    juce::TextButton copyButton { "COPY" };
-    juce::TextButton pasteButton { "PASTE" };
-    juce::TextButton eqMatchButton { "EQ MATCH" };
-    juce::TextButton referenceButton { "CAPTURE REF" };
-    juce::TextButton phaseModeButton { "Zero Latency" };
-    juce::TextButton characterButton { "Clean" };
-    juce::TextButton sketchButton { "SKETCH" };
-    juce::TextButton uiScaleButton { "100%" };
+     juce::TextButton phaseFlipButton { "Ø" };
+     juce::TextButton copyButton { "COPY" };
+     juce::TextButton pasteButton { "PASTE" };
+     juce::TextButton eqMatchButton { "EQ MATCH" };
+     juce::TextButton referenceButton { "CAPTURE REF" };
+     juce::TextButton phaseModeButton { "Zero Latency" };
+     juce::TextButton characterButton { "Clean" };
+     juce::TextButton sketchButton { "SKETCH" };
+     juce::TextButton deltaModeButton { "DELTA" };
+     juce::TextButton sidechainButton { "SIDECHAIN" };
+     juce::TextButton lookaheadButton { "LOOKAHEAD" };
 
     juce::ComboBox presetSelector;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> presetAttachment;
 
     // Spectrum analyzer
     juce::OpenGLContext openGLContext;
@@ -143,8 +153,6 @@ private:
 
     void updateAttachments();
     void updateButtonStates();
-    void characterModeMenu();
-    void phaseModeMenu();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CleanSlateAudioProcessorEditor)
 };
