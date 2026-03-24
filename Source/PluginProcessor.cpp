@@ -230,6 +230,19 @@ void CleanSlateAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     // Reset latency
     latencySamples = 0;
     
+    // Initialize pre-allocated buffers and contexts for zero-latency processing (FIX #6)
+    bufL.setSize(1, 1);
+    bufR.setSize(1, 1);
+    stereoBuffer.setSize(2, 1);
+    
+    blockL = std::make_unique<juce::dsp::AudioBlock<float>>(bufL);
+    blockR = std::make_unique<juce::dsp::AudioBlock<float>>(bufR);
+    stereoBlock = std::make_unique<juce::dsp::AudioBlock<float>>(stereoBuffer);
+    
+    ctxL = std::make_unique<juce::dsp::ProcessContextReplacing<float>>(*blockL);
+    ctxR = std::make_unique<juce::dsp::ProcessContextReplacing<float>>(*blockR);
+    ctxStereo = std::make_unique<juce::dsp::ProcessContextReplacing<float>>(*stereoBlock);
+    
     updateFilters ();
 }
 
@@ -426,6 +439,27 @@ void CleanSlateAudioProcessor::updateFilters ()
 
     tiltAmount = treeState.getRawParameterValue ("tilt")->load ();
 
+    // Calculate useMS for current bands
+    useMS = false;
+    for (int i = 0; i < 8; ++i)
+    {
+        if (bandStates[i].active && (bandStates[i].mode == 3 || bandStates[i].mode == 4))
+        {
+            useMS = true;
+            break;
+        }
+    }
+
+    // Handle M/S solo
+    midSolo = (treeState.getRawParameterValue ("midSolo")->load () > 0.5f);
+    sideSolo = (treeState.getRawParameterValue ("sideSolo")->load () > 0.5f);
+    
+    // Handle spectrum view mode
+    spectrumViewMode = (int)treeState.getRawParameterValue ("spectrumView")->load ();
+    
+    // Handle analog modeling
+    analogModel = (int)treeState.getRawParameterValue ("analogModel")->load ();
+
     if (treeState.getRawParameterValue ("autoGain")->load () > 0.5f)
     {
         float totalBoosts = std::max (0.0f, totalBoost);
@@ -451,16 +485,8 @@ void CleanSlateAudioProcessor::processWithZeroLatency (juce::AudioBuffer<float>&
 
     int numSamples = buffer.getNumSamples ();
 
-    // Pre-allocate buffers OUTSIDE the sample loop (FIX #6)
-    juce::AudioBuffer<float> bufL(1, 1);
-    juce::AudioBuffer<float> bufR(1, 1);
-    juce::AudioBuffer<float> stereoBuffer(2, 1);
-    juce::dsp::AudioBlock<float> blockL (bufL);
-    juce::dsp::AudioBlock<float> blockR (bufR);
-    juce::dsp::AudioBlock<float> stereoBlock (stereoBuffer);
-    juce::dsp::ProcessContextReplacing<float> ctxL (blockL);
-    juce::dsp::ProcessContextReplacing<float> ctxR (blockR);
-    juce::dsp::ProcessContextReplacing<float> ctxStereo (stereoBlock);
+    // Validate that buffers and contexts are initialized
+    if (ctxL == nullptr || ctxR == nullptr || ctxStereo == nullptr) return;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -484,14 +510,9 @@ void CleanSlateAudioProcessor::processWithZeroLatency (juce::AudioBuffer<float>&
         {
             if (! bandStates[i].active) continue;
 
-            float bandLeft = leftSample;
-            float bandRight = rightSample;
-
-            // Reuse pre-allocated buffers (FIX #6: moved outside loop)
-            bufL.setSample(0, 0, bandLeft);
-            bufR.setSample(0, 0, bandRight);
-            stereoBuffer.setSample(0, 0, leftSample);
-            stereoBuffer.setSample(1, 0, rightSample);
+            // Reuse pre-allocated member buffers (FIX #6)
+            bufL.setSample(0, 0, leftSample);
+            bufR.setSample(0, 0, rightSample);
 
             // Apply M/S solo functionality
             bool processThisBand = true;
@@ -508,44 +529,31 @@ void CleanSlateAudioProcessor::processWithZeroLatency (juce::AudioBuffer<float>&
             {
                 if (bandStates[i].mode == 3) // Mid
                 {
-                    filtersM[i].process (ctxL);
+                    filtersM[i].process (*ctxL);
+                    leftSample = bufL.getSample(0, 0);
                 }
                 else if (bandStates[i].mode == 4) // Side
                 {
-                    filtersS[i].process (ctxR);
+                    filtersS[i].process (*ctxR);
+                    rightSample = bufR.getSample(0, 0);
                 }
                 else if (bandStates[i].mode == 1) // Left
                 {
-                    filtersL[i].process (ctxL);
+                    filtersL[i].process (*ctxL);
+                    leftSample = bufL.getSample(0, 0);
                 }
                 else if (bandStates[i].mode == 2) // Right
                 {
-                    filtersR[i].process (ctxR);
+                    filtersR[i].process (*ctxR);
+                    rightSample = bufR.getSample(0, 0);
                 }
-                else // Stereo (Mode 0)
+                else // Stereo (Mode 0) (FIX #14: Stereo processing bug)
                 {
-                    filtersL[i].process (ctxStereo);
-                    leftSample = stereoBuffer.getSample (0, 0);
-                    rightSample = stereoBuffer.getSample (1, 0);
+                    filtersL[i].process (*ctxL);
+                    filtersR[i].process (*ctxR);
+                    leftSample = bufL.getSample (0, 0);
+                    rightSample = bufR.getSample (0, 0);
                 }
-            }
-
-            // Get processed values back from buffers
-            if (bandStates[i].mode == 3) // Mid
-            {
-                leftSample = blockL.getSample(0, 0);
-            }
-            else if (bandStates[i].mode == 4) // Side
-            {
-                rightSample = blockR.getSample(0, 0);
-            }
-            else if (bandStates[i].mode == 1) // Left
-            {
-                leftSample = blockL.getSample(0, 0);
-            }
-            else if (bandStates[i].mode == 2) // Right
-            {
-                rightSample = blockR.getSample(0, 0);
             }
         }
 

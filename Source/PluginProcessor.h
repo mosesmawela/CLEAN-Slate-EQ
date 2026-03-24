@@ -187,6 +187,7 @@ private:
     SurgicalFilter filtersL[8], filtersR[8];      // Stereo processing
     SurgicalFilter filtersM[8], filtersS[8];      // M/S processing
 
+    bool useMS = false;
     float mAutoGain { 1.0f };
     double currentSampleRate = 44100.0;
 
@@ -247,6 +248,11 @@ private:
 
     // Sidechain
     bool hasSidechain = false;
+
+    // Pre-allocated buffers and contexts for zero-latency processing (FIX #6)
+    juce::AudioBuffer<float> bufL, bufR, stereoBuffer;
+    std::unique_ptr<juce::dsp::AudioBlock<float>> blockL, blockR, stereoBlock;
+    std::unique_ptr<juce::dsp::ProcessContextReplacing<float>> ctxL, ctxR, ctxStereo;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CleanSlateAudioProcessor)
 };

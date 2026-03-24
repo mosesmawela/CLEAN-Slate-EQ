@@ -25,6 +25,8 @@ public:
                         float threshold = 0.0f, float ratio = 1.0f, float attack = 0.1f, float release = 0.1f,
                         bool isDynamic = false, int character = 0)
     {
+        bool paramsChanged = (currentFreq != freq || currentQ != q || currentGain != gain || currentType != type || this->isDynamic != isDynamic);
+        
         this->currentFreq = freq;
         this->currentQ = q;
         this->currentGain = gain;
@@ -35,15 +37,18 @@ public:
         targetThreshold = threshold;
         targetRatio = ratio;
         
-        // Note: Dynamic EQ logic uses its own envelope calculation in process()
-        
         // slopeIndex: 0=6s, 1=12s, 2=24s, 3=48s, 4=96s
+        int oldStages = stages;
         stages = 1;
         if (slopeIndex == 2) stages = 2;
         else if (slopeIndex == 3) stages = 4;
         else if (slopeIndex == 4) stages = 8;
 
-        updateCoefficients (currentGain);
+        if (paramsChanged || stages != oldStages)
+        {
+            lastGain = -999.0f; // Force update
+            updateCoefficients (currentGain);
+        }
     }
 
     template <typename ProcessContext>
@@ -51,10 +56,6 @@ public:
     {
         auto inputBlock = context.getInputBlock();
         auto outputBlock = context.getOutputBlock();
-        
-        // Update coefficients at the start of the block for performance
-        // If it's dynamic, we usually do this sample-by-sample, but that's very expensive.
-        // We'll calculate a block-level envelope instead.
         
         if (isDynamic)
         {
@@ -77,10 +78,6 @@ public:
             {
                 updateCoefficients (currentGain);
             }
-        }
-        else
-        {
-            updateCoefficients (currentGain);
         }
 
         for (int i = 0; i < stages; ++i)
@@ -107,11 +104,15 @@ public:
     {
         for (int i = 0; i < 8; ++i)
             cascade[i].reset();
+        lastGain = -999.0f;
     }
 
 private:
     void updateCoefficients (float gain)
     {
+        if (std::abs (gain - lastGain) < 0.01f) return;
+        lastGain = gain;
+
         auto g = juce::Decibels::decibelsToGain (gain);
         juce::ReferenceCountedObjectPtr<juce::dsp::IIR::Coefficients<float>> coeffs;
 
@@ -139,6 +140,7 @@ private:
     int stages = 1;
     int currentType = Peak;
     float currentFreq = 1000.0f, currentQ = 0.707f, currentGain = 0.0f;
+    float lastGain = -999.0f;
     
     // Dynamic Params
     bool isDynamic = false;
