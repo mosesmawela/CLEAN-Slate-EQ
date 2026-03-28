@@ -138,6 +138,9 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // Returns the latency in samples introduced by this plugin.
+    int getLatencySamples() override;
+
     juce::AudioProcessorValueTreeState treeState;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

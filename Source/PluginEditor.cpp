@@ -176,28 +176,55 @@ void EqGraphComponent::paint (juce::Graphics& g)
     for (int x = 0; x <= getWidth(); x += 2)
     {
         float freq = getFreqForX ((float)x);
-        float totalGain = 0.0f;
+        float totalMag = 1.0f;
 
         for (int i = 0; i < 8; ++i)
         {
-            auto* freqParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_freq");
-            auto* gainParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_gain");
-            auto* qParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_q");
-            auto* activeParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_active");
-
-            if (activeParam->load() > 0.5f)
+            auto& state = processor.getBandState(i);
+            if (state.active)
             {
-                float f0 = freqParam->load();
-                float g0 = gainParam->load();
-                float q = qParam->load();
+                // We'll use a temporary coefficient set to calculate magnitude
+                // since we don't want to rely on processor internal state during paint
+                auto g = juce::Decibels::decibelsToGain (state.gain);
+                juce::ReferenceCountedObjectPtr<juce::dsp::IIR::Coefficients<float>> coeffs;
                 
-                // Peak filter approximation for curve rendering
-                float dist = std::abs (std::log10 (freq / f0));
-                totalGain += g0 * std::exp (-dist * dist * q * 5.0f);
+                // Map types (same as in SurgicalFilter)
+                int surgType = state.type; 
+                // types: HighPass=0, Peak=1, LowPass=2, Notch=3, LowShelf=4, HighShelf=5, AllPass=6
+                
+                double sr = processor.getSampleRate();
+                if (sr <= 0) sr = 44100.0;
+
+                // Simple 2nd order approximation for the curve (12dB/oct base)
+                switch (surgType)
+                {
+                    case 0: coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, state.freq, state.q); break;
+                    case 1: coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, state.freq, state.q, g); break;
+                    case 2: coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass (sr, state.freq, state.q); break;
+                    case 3: coeffs = juce::dsp::IIR::Coefficients<float>::makeNotch (sr, state.freq, state.q); break;
+                    case 4: coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, state.freq, state.q, g); break;
+                    case 5: coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, state.freq, state.q, g); break;
+                    default: totalMag *= 1.0f; break;
+                }
+
+                if (coeffs)
+                {
+                    float mag = coeffs->getMagnitudeForFrequency (freq, sr);
+                    // Apply stages based on slope
+                    int stages = 1;
+                    if (state.slope == 2) stages = 2;
+                    else if (state.slope == 3) stages = 4;
+                    else if (state.slope == 4) stages = 8;
+                    
+                    for (int s = 0; s < stages; ++s)
+                        totalMag *= mag;
+                }
             }
         }
 
-        float y = getYForGain (totalGain);
+        float totalGainDb = juce::Decibels::gainToDecibels (totalMag);
+        float y = getYForGain (totalGainDb);
+        
         if (!started) { curve.startNewSubPath (x, y); started = true; }
         else curve.lineTo (x, y);
     }
@@ -266,9 +293,19 @@ void EqGraphComponent::mouseDoubleClick (const juce::MouseEvent& e)
         auto* activeParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_active");
         if (activeParam->load() < 0.5f)
         {
-            processor.treeState.getParameter ("band" + juce::String (i) + "_freq")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (i) + "_freq").convertTo0to1 (getFreqForX (e.position.x)));
-            processor.treeState.getParameter ("band" + juce::String (i) + "_gain")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (i) + "_gain").convertTo0to1 (getGainForY (e.position.y)));
-            processor.treeState.getParameter ("band" + juce::String (i) + "_active")->setValueNotifyingHost (1.0f);
+            // Wrap parameter changes in undo/redo
+            processor.getUndoManager().beginNewTransaction();
+            
+            processor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+                processor.treeState, "band" + juce::String (i) + "_freq", 
+                processor.treeState.getParameterRange ("band" + juce::String (i) + "_freq").convertTo0to1 (getFreqForX (e.position.x))));
+                
+            processor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+                processor.treeState, "band" + juce::String (i) + "_gain", 
+                processor.treeState.getParameterRange ("band" + juce::String (i) + "_gain").convertTo0to1 (getGainForY (e.position.y))));
+                
+            processor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+                processor.treeState, "band" + juce::String (i) + "_active", 1.0f));
 
             if (auto* editor = dynamic_cast<CleanSlateAudioProcessorEditor*>(getParentComponent()))
                 editor->selectedBand = i;
@@ -283,6 +320,7 @@ void EqGraphComponent::mouseDoubleClick (const juce::MouseEvent& e)
 void EqGraphComponent::mouseDown (const juce::MouseEvent& e)
 {
     draggingBand = -1;
+    undoTransactionStarted = false;
     for (int i = 0; i < 8; ++i)
     {
         auto* activeParam = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_active");
@@ -291,7 +329,7 @@ void EqGraphComponent::mouseDown (const juce::MouseEvent& e)
             float f = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_freq")->load();
             float gn = processor.treeState.getRawParameterValue ("band" + juce::String (i) + "_gain")->load();
             auto pos = juce::Point<float> (getXForFreq (f), getYForGain (gn));
-            
+
             if (pos.getDistanceSquaredFrom (e.position) < 100)
             {
                 draggingBand = i;
@@ -312,8 +350,18 @@ void EqGraphComponent::mouseDrag (const juce::MouseEvent& e)
     }
     else if (draggingBand != -1)
     {
-        processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_freq")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_freq").convertTo0to1 (getFreqForX (e.position.x)));
-        processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_gain")->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_gain").convertTo0to1 (getGainForY (e.position.y)));
+        // Only begin transaction once per drag session (not every sample)
+        if (!undoTransactionStarted)
+        {
+            processor.getUndoManager().beginNewTransaction();
+            undoTransactionStarted = true;
+        }
+
+        processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_freq")->setValueNotifyingHost (
+            processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_freq").convertTo0to1 (getFreqForX (e.position.x)));
+        processor.treeState.getParameter ("band" + juce::String (draggingBand) + "_gain")->setValueNotifyingHost (
+            processor.treeState.getParameterRange ("band" + juce::String (draggingBand) + "_gain").convertTo0to1 (getGainForY (e.position.y)));
+
         processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
         repaint();
     }
@@ -323,10 +371,18 @@ void EqGraphComponent::mouseWheelMove (const juce::MouseEvent& e, const juce::Mo
 {
     if (hoveredBand != -1)
     {
+        // Only begin transaction once per wheel session
+        if (!undoTransactionStarted)
+        {
+            processor.getUndoManager().beginNewTransaction();
+            undoTransactionStarted = true;
+        }
+
         auto* qParam = processor.treeState.getParameter ("band" + juce::String (hoveredBand) + "_q");
         float currentQ = processor.treeState.getRawParameterValue ("band" + juce::String (hoveredBand) + "_q")->load();
         float newQ = juce::jlimit (0.1f, 10.0f, currentQ + d.deltaY * 0.5f);
         qParam->setValueNotifyingHost (processor.treeState.getParameterRange ("band" + juce::String (hoveredBand) + "_q").convertTo0to1 (newQ));
+
         processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
         repaint();
     }
@@ -355,11 +411,6 @@ void EqGraphComponent::mouseMove (const juce::MouseEvent& e)
     repaint();
 }
 
-float EqGraphComponent::getXForFreq (float freq) { return juce::jmap (std::log10 (freq), std::log10 (20.0f), std::log10 (20000.0f), 0.0f, (float)getWidth()); }
-float EqGraphComponent::getFreqForX (float x) { return std::pow (10.0f, juce::jmap (x, 0.0f, (float)getWidth(), std::log10 (20.0f), std::log10 (20000.0f))); }
-float EqGraphComponent::getYForGain (float gain) { return juce::jmap (gain, -24.0f, 24.0f, (float)getHeight(), 0.0f); }
-float EqGraphComponent::getGainForY (float y) { return juce::jmap (y, (float)getHeight(), 0.0f, -24.0f, 24.0f); }
-
 void EqGraphComponent::mouseUp (const juce::MouseEvent& e)
 {
     if (isSketching)
@@ -369,7 +420,14 @@ void EqGraphComponent::mouseUp (const juce::MouseEvent& e)
         sketchPoints.clear();
         repaint();
     }
+    // Reset undo transaction flag on mouse up
+    undoTransactionStarted = false;
 }
+
+float EqGraphComponent::getXForFreq (float freq) { return juce::jmap (std::log10 (freq), std::log10 (20.0f), std::log10 (20000.0f), 0.0f, (float)getWidth()); }
+float EqGraphComponent::getFreqForX (float x) { return std::pow (10.0f, juce::jmap (x, 0.0f, (float)getWidth(), std::log10 (20.0f), std::log10 (20000.0f))); }
+float EqGraphComponent::getYForGain (float gain) { return juce::jmap (gain, -24.0f, 24.0f, (float)getHeight(), 0.0f); }
+float EqGraphComponent::getGainForY (float y) { return juce::jmap (y, (float)getHeight(), 0.0f, -24.0f, 24.0f); }
 
 void EqGraphComponent::finishSketch()
 {
@@ -379,6 +437,8 @@ void EqGraphComponent::finishSketch()
     for (auto p : sketchPoints)
         points.push_back ({ getFreqForX (p.x), getGainForY (p.y) });
 
+    // Wrap sketch action in undo/redo
+    processor.getUndoManager().beginNewTransaction();
     processor.createBandsFromSketch (points);
     processor.markFiltersForUpdate();  // FIX #7: Tell processor to update filters
 }
@@ -406,25 +466,40 @@ CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioP
      phaseModeButton.onClick = [this] { phaseModeMenu(); };
      characterButton.onClick = [this] { characterModeMenu(); };
      
-     deltaModeButton.onClick = [this] { 
-         float currentState = audioProcessor.treeState.getRawParameterValue ("deltaMode")->load();
-         bool newState = currentState <= 0.5f;
-         audioProcessor.treeState.getParameter ("deltaMode")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
-         deltaModeButton.setButtonText (newState ? "DELTA ON" : "DELTA");
-     };
+      deltaModeButton.onClick = [this] { 
+          float currentState = audioProcessor.treeState.getRawParameterValue ("deltaMode")->load();
+          bool newState = currentState <= 0.5f;
+          
+          // Wrap parameter changes in undo/redo
+          audioProcessor.getUndoManager().beginNewTransaction();
+          audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+              audioProcessor.treeState, "deltaMode", newState ? 1.0f : 0.0f));
+              
+          deltaModeButton.setButtonText (newState ? "DELTA ON" : "DELTA");
+      };
 
-     sidechainButton.onClick = [this] { 
-         float currentState = audioProcessor.treeState.getRawParameterValue ("externalSidechain")->load();
-         bool newState = currentState <= 0.5f;
-         audioProcessor.treeState.getParameter ("externalSidechain")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
-         sidechainButton.setButtonText (newState ? "SIDECHAIN ON" : "SIDECHAIN");
-     };
+      sidechainButton.onClick = [this] { 
+          float currentState = audioProcessor.treeState.getRawParameterValue ("externalSidechain")->load();
+          bool newState = currentState <= 0.5f;
+          
+          // Wrap parameter changes in undo/redo
+          audioProcessor.getUndoManager().beginNewTransaction();
+          audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+              audioProcessor.treeState, "externalSidechain", newState ? 1.0f : 0.0f));
+              
+          sidechainButton.setButtonText (newState ? "SIDECHAIN ON" : "SIDECHAIN");
+      };
      
-     lookaheadButton.onClick = [this] { 
-         bool newState = (audioProcessor.treeState.getRawParameterValue ("lookahead")->load () <= 0.5f);
-         audioProcessor.treeState.getParameter ("lookahead")->setValueNotifyingHost (newState ? 1.0f : 0.0f);
-         lookaheadButton.setButtonText (newState ? "LOOKAHEAD ON" : "LOOKAHEAD");
-     };
+      lookaheadButton.onClick = [this] { 
+          bool newState = (audioProcessor.treeState.getRawParameterValue ("lookahead")->load () <= 0.5f);
+          
+          // Wrap parameter changes in undo/redo
+          audioProcessor.getUndoManager().beginNewTransaction();
+          audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+              audioProcessor.treeState, "lookahead", newState ? 1.0f : 0.0f));
+              
+          lookaheadButton.setButtonText (newState ? "LOOKAHEAD ON" : "LOOKAHEAD");
+      };
 
      // Resizing Logic
     setResizable (true, true);
@@ -456,14 +531,36 @@ CleanSlateAudioProcessorEditor::CleanSlateAudioProcessorEditor (CleanSlateAudioP
     }
     
     bandButtons[0].setToggleState (true, juce::sendNotification);
-    
+
     for (auto* b : { &resKillButton, &smartLearnButton, &monoSubButton, &phaseFlipButton })
         addAndMakeVisible (b);
-    
+
     resKillButton.setClickingTogglesState (true);
     smartLearnButton.setClickingTogglesState (true);
     monoSubButton.setClickingTogglesState (true);
     phaseFlipButton.setClickingTogglesState (true);
+
+    // Add undo support for utility buttons
+    resKillButton.onClick = [this] {
+        audioProcessor.getUndoManager().beginNewTransaction();
+        audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+            audioProcessor.treeState, "resKill", resKillButton.getToggleState() ? 1.0f : 0.0f));
+    };
+    smartLearnButton.onClick = [this] {
+        audioProcessor.getUndoManager().beginNewTransaction();
+        audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+            audioProcessor.treeState, "smartLearn", smartLearnButton.getToggleState() ? 1.0f : 0.0f));
+    };
+    monoSubButton.onClick = [this] {
+        audioProcessor.getUndoManager().beginNewTransaction();
+        audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+            audioProcessor.treeState, "monoSub", monoSubButton.getToggleState() ? 1.0f : 0.0f));
+    };
+    phaseFlipButton.onClick = [this] {
+        audioProcessor.getUndoManager().beginNewTransaction();
+        audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+            audioProcessor.treeState, "phaseInvert", phaseFlipButton.getToggleState() ? 1.0f : 0.0f));
+    };
 
     // OpenGL Setup
     openGLContext.setRenderer (this);
@@ -488,20 +585,51 @@ void CleanSlateAudioProcessorEditor::updateAttachments()
 
     juce::String id = "band" + juce::String (selectedBand);
     
-    // Refresh HUD Attachments
+    // Refresh HUD UI states
     hud.shapeBox.setSelectedItemIndex ((int)audioProcessor.treeState.getRawParameterValue (id + "_type")->load(), juce::dontSendNotification);
     hud.slopeBox.setSelectedItemIndex ((int)audioProcessor.treeState.getRawParameterValue (id + "_slope")->load(), juce::dontSendNotification);
     hud.modeBox.setSelectedItemIndex ((int)audioProcessor.treeState.getRawParameterValue (id + "_mode")->load(), juce::dontSendNotification);
     hud.dynamicBox.setSelectedItemIndex ((int)audioProcessor.treeState.getRawParameterValue (id + "_dynamic")->load(), juce::dontSendNotification);
 
     // Callbacks to update processor when HUD changes
-    hud.shapeBox.onChange = [this, id] { audioProcessor.treeState.getParameter (id + "_type")->setValueNotifyingHost (audioProcessor.treeState.getParameterRange (id + "_type").convertTo0to1 (hud.shapeBox.getSelectedItemIndex())); };
-    hud.slopeBox.onChange = [this, id] { audioProcessor.treeState.getParameter (id + "_slope")->setValueNotifyingHost (audioProcessor.treeState.getParameterRange (id + "_slope").convertTo0to1 (hud.slopeBox.getSelectedItemIndex())); };
-    hud.modeBox.onChange = [this, id] { audioProcessor.treeState.getParameter (id + "_mode")->setValueNotifyingHost (audioProcessor.treeState.getParameterRange (id + "_mode").convertTo0to1 (hud.modeBox.getSelectedItemIndex())); };
-    hud.dynamicBox.onChange = [this, id] { audioProcessor.treeState.getParameter (id + "_dynamic")->setValueNotifyingHost (audioProcessor.treeState.getParameterRange (id + "_dynamic").convertTo0to1 (hud.dynamicBox.getSelectedItemIndex())); };
+     hud.shapeBox.onChange = [this, id] { 
+         // Wrap parameter changes in undo/redo
+         audioProcessor.getUndoManager().beginNewTransaction();
+         audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+             audioProcessor.treeState, id + "_type", 
+             audioProcessor.treeState.getParameterRange (id + "_type").convertTo0to1 (hud.shapeBox.getSelectedItemIndex())));
+         audioProcessor.markFiltersForUpdate(); 
+     };
+     hud.slopeBox.onChange = [this, id] { 
+         // Wrap parameter changes in undo/redo
+         audioProcessor.getUndoManager().beginNewTransaction();
+         audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+             audioProcessor.treeState, id + "_slope", 
+             audioProcessor.treeState.getParameterRange (id + "_slope").convertTo0to1 (hud.slopeBox.getSelectedItemIndex())));
+         audioProcessor.markFiltersForUpdate(); 
+     };
+     hud.modeBox.onChange = [this, id] { 
+         // Wrap parameter changes in undo/redo
+         audioProcessor.getUndoManager().beginNewTransaction();
+         audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+             audioProcessor.treeState, id + "_mode", 
+             audioProcessor.treeState.getParameterRange (id + "_mode").convertTo0to1 (hud.modeBox.getSelectedItemIndex())));
+         audioProcessor.markFiltersForUpdate(); 
+     };
+     hud.dynamicBox.onChange = [this, id] { 
+         // Wrap parameter changes in undo/redo
+         audioProcessor.getUndoManager().beginNewTransaction();
+         audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+             audioProcessor.treeState, id + "_dynamic", 
+             audioProcessor.treeState.getParameterRange (id + "_dynamic").convertTo0to1 (hud.dynamicBox.getSelectedItemIndex())));
+         audioProcessor.markFiltersForUpdate(); 
+     };
 
-    // Slider Attachments for Dynamic EQ
-    thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.treeState, id + "_threshold", hud.attackSlider); // Placeholder for attack/release mapping
+    // Slider Attachments for Dynamic EQ and Surgical Controls
+    thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.treeState, id + "_threshold", hud.thresholdSlider);
+    ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.treeState, id + "_ratio", hud.ratioSlider);
+    attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.treeState, id + "_attack", hud.attackSlider);
+    releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.treeState, id + "_release", hud.releaseSlider);
 }
 
 void CleanSlateAudioProcessorEditor::copyEqCurve()
@@ -519,15 +647,20 @@ void CleanSlateAudioProcessorEditor::phaseModeMenu()
 {
     juce::PopupMenu m;
     float phaseValue = audioProcessor.treeState.getRawParameterValue ("phaseMode")->load();
-    int phaseIdx = static_cast<int>(phaseValue * 2.0f);
+    int phaseIdx = static_cast<int>(phaseValue); // Fixed: removed incorrect * 2.0f
 
     m.addItem (1, "Zero Latency", true, phaseIdx == 0);
     m.addItem (2, "Natural Phase", true, phaseIdx == 1);
     m.addItem (3, "Linear Phase", true, phaseIdx == 2);
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (phaseModeButton), [this] (int result) {
-        if (result > 0) audioProcessor.treeState.getParameter ("phaseMode")->setValueNotifyingHost ((result - 1) / 2.0f);
-        phaseModeButton.setButtonText (result == 1 ? "Zero Latency" : result == 2 ? "Natural Phase" : "Linear Phase");
+        if (result > 0) {
+            // Wrap parameter changes in undo/redo
+            audioProcessor.getUndoManager().beginNewTransaction();
+            audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+                audioProcessor.treeState, "phaseMode", (result - 1) / 2.0f));
+            audioProcessor.markFiltersForUpdate();
+        }
     });
 }
 
@@ -535,15 +668,20 @@ void CleanSlateAudioProcessorEditor::characterModeMenu()
 {
     juce::PopupMenu m;
     float charValue = audioProcessor.treeState.getRawParameterValue ("characterMode")->load();
-    int charIdx = static_cast<int>(charValue * 2.0f);
+    int charIdx = static_cast<int>(charValue); // Fixed: removed incorrect * 2.0f
 
     m.addItem (1, "Clean", true, charIdx == 0);
     m.addItem (2, "Subtle (Transformer)", true, charIdx == 1);
     m.addItem (3, "Warm (Tube)", true, charIdx == 2);
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (characterButton), [this] (int result) {
-        if (result > 0) audioProcessor.treeState.getParameter ("characterMode")->setValueNotifyingHost ((result - 1) / 2.0f);
-        characterButton.setButtonText (result == 1 ? "Clean" : result == 2 ? "Subtle" : "Warm");
+        if (result > 0) {
+            // Wrap parameter changes in undo/redo
+            audioProcessor.getUndoManager().beginNewTransaction();
+            audioProcessor.getUndoManager().perform(new CleanSlateAudioProcessor::ParameterChangeAction(
+                audioProcessor.treeState, "characterMode", (result - 1) / 2.0f));
+            audioProcessor.markFiltersForUpdate();
+        }
     });
 }
 
@@ -689,7 +827,23 @@ void CleanSlateAudioProcessorEditor::renderOpenGL()
     if (shader == nullptr) return;
     
     shader->use();
-    // In a real implementation, we would update the texture with scopeData here
+    
+    // Create a simple texture from scopeData
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, scopeSize, 1, 0, GL_RED, GL_FLOAT, scopeData);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    shader->setUniform("uFFT", 0);
+    
+    // Draw a fullscreen quad (this is a bit simplified for JUCE OpenGL)
+    // In a full implementation we would set up vertex buffers
+    
+    glDeleteTextures(1, &textureID);
 }
 
 void CleanSlateAudioProcessorEditor::openGLContextClosing()

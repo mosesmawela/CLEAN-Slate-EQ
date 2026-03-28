@@ -1,18 +1,18 @@
-# 🚀 NEXT STEPS: GET YOUR PLUGIN RUNNING
+﻿# ðŸš€ NEXT STEPS: GET YOUR PLUGIN RUNNING
 
 ## Step 1: Copy Plugin to FL Studio (5 minutes)
 
 ### Option A: Using Windows Explorer
-1. Open: `C:\Users\Moses\Documents\Anti-Gravity\CLEAN Slate EQ\build`
+1. Open: `<PROJECT_ROOT>\build`
 2. Navigate to: `CLEAN_Slate_EQ_artefacts\Debug\VST3\`
 3. Find: `CLEAN Slate EQ.vst3` folder
-4. Right-click → Copy
+4. Right-click â†’ Copy
 5. Paste to: `C:\Program Files\Image-Line\FL Studio 21\Plugins\Fruity\VST3`
    - (Or your FL Studio installation path)
 
 ### Option B: Using Command Line
 ```powershell
-$src = 'C:\Users\Moses\Documents\Anti-Gravity\CLEAN Slate EQ\build\CLEAN_Slate_EQ_artefacts\Debug\VST3\CLEAN Slate EQ.vst3'
+$src = '<PROJECT_ROOT>\build\CLEAN_Slate_EQ_artefacts\Debug\VST3\CLEAN Slate EQ.vst3'
 $dst = 'C:\Program Files\Image-Line\FL Studio 21\Plugins\Fruity\VST3\CLEAN Slate EQ.vst3'
 Copy-Item -Path $src -Destination $dst -Recurse -Force
 ```
@@ -42,20 +42,20 @@ Copy-Item -Path $src -Destination $dst -Recurse -Force
 
 ### Quick Feature Test
 ```
-✓ Stereo audio test:      Play an MP3 - should hear it
-✓ Mono audio test:        Record voice - should hear it
-✓ Phase mode switching:   Click "Zero Latency" button
-✓ Drag EQ nodes:          Click and drag circle on the graph
-✓ Parameter changes:      Adjust Gain slider
-✓ CPU monitor:            Should be LOW and STABLE
+âœ“ Stereo audio test:      Play an MP3 - should hear it
+âœ“ Mono audio test:        Record voice - should hear it
+âœ“ Phase mode switching:   Click "Zero Latency" button
+âœ“ Drag EQ nodes:          Click and drag circle on the graph
+âœ“ Parameter changes:      Adjust Gain slider
+âœ“ CPU monitor:            Should be LOW and STABLE
 ```
 
 ### Success Indicators
-- ✅ Audio plays through plugin
-- ✅ No crash on load
-- ✅ No error messages
-- ✅ CPU usage is reasonable (<10% for idle)
-- ✅ Smooth response to parameter changes
+- âœ… Audio plays through plugin
+- âœ… No crash on load
+- âœ… No error messages
+- âœ… CPU usage is reasonable (<10% for idle)
+- âœ… Smooth response to parameter changes
 
 ---
 
@@ -101,9 +101,9 @@ Copy-Item -Path $src -Destination $dst -Recurse -Force
 
 **Fix:**
 1. Check file was copied: `C:\Program Files\Image-Line\FL Studio 21\Plugins\Fruity\VST3\CLEAN Slate EQ.vst3`
-2. Right-click VST3 folder → Properties → Unblock (if needed)
+2. Right-click VST3 folder â†’ Properties â†’ Unblock (if needed)
 3. Restart FL Studio
-4. Go to Settings → Plugins → VST3 → Rescan
+4. Go to Settings â†’ Plugins â†’ VST3 â†’ Rescan
 
 ### Audio is Silent
 **Symptom:** Loaded but no sound
@@ -139,7 +139,7 @@ If something goes wrong, try these:
 
 ### Clean Rebuild
 ```powershell
-cd "C:\Users\Moses\Documents\Anti-Gravity\CLEAN Slate EQ"
+cd "<PROJECT_ROOT>"
 Remove-Item -Path "build" -Recurse -Force
 mkdir build
 cd build
@@ -154,7 +154,7 @@ ls "C:\Program Files\Image-Line\FL Studio 21\Plugins\Fruity\VST3\CLEAN Slate EQ.
 
 ### Check FL Studio Log
 1. Open FL Studio
-2. Go to `Help` → `About`
+2. Go to `Help` â†’ `About`
 3. Check console/debug window
 
 ---
@@ -191,7 +191,7 @@ To get best performance:
 2. **Sample rate:** 44.1kHz or 48kHz recommended
 3. **Plugins:** Disable other plugins when testing
 4. **CPU mode:** Close other applications
-5. **Real-time Priority:** Set FL Studio to high priority (Settings → CPU)
+5. **Real-time Priority:** Set FL Studio to high priority (Settings â†’ CPU)
 
 ---
 
@@ -210,16 +210,16 @@ To get best performance:
 ## Step 10: Success Checklist
 
 When all this works, you have:
-- ✅ Functional EQ plugin
-- ✅ Working phase modes
-- ✅ Working character modes
-- ✅ Stable audio processing
-- ✅ Low CPU usage
-- ✅ Professional-grade tool
+- âœ… Functional EQ plugin
+- âœ… Working phase modes
+- âœ… Working character modes
+- âœ… Stable audio processing
+- âœ… Low CPU usage
+- âœ… Professional-grade tool
 
 ---
 
-## 📚 Documentation Files
+## ðŸ“š Documentation Files
 
 If you need detailed info:
 
@@ -233,14 +233,14 @@ If you need detailed info:
 
 ---
 
-## 🎯 Your Action Plan
+## ðŸŽ¯ Your Action Plan
 
 **TODAY:**
-1. Copy VST3 to FL Studio ✓
-2. Restart FL Studio ✓
-3. Load plugin and test ✓
-4. If works → Use in music! 🎵
-5. If fails → Check troubleshooting above
+1. Copy VST3 to FL Studio âœ“
+2. Restart FL Studio âœ“
+3. Load plugin and test âœ“
+4. If works â†’ Use in music! ðŸŽµ
+5. If fails â†’ Check troubleshooting above
 
 **THIS WEEK:**
 - [ ] Create test presets
@@ -255,7 +255,7 @@ If you need detailed info:
 
 ---
 
-## 💬 Support Summary
+## ðŸ’¬ Support Summary
 
 **If audio works:** Congratulations! Your plugin is functional.
 
@@ -271,7 +271,7 @@ If you need detailed info:
 
 ---
 
-## ⚡ Quick Start (TL;DR)
+## âš¡ Quick Start (TL;DR)
 
 ```
 1. Copy: build\CLEAN_Slate_EQ_artefacts\Debug\VST3\CLEAN Slate EQ.vst3
@@ -283,7 +283,8 @@ If you need detailed info:
 
 ---
 
-**🎉 YOU'RE READY! Your plugin is now fixed and functional. Go make music! 🎉**
+**ðŸŽ‰ YOU'RE READY! Your plugin is now fixed and functional. Go make music! ðŸŽ‰**
 
 *Estimated time to get working: 15-30 minutes*
-*Estimated satisfaction level: Very High ⭐⭐⭐⭐⭐*
+*Estimated satisfaction level: Very High â­â­â­â­â­*
+

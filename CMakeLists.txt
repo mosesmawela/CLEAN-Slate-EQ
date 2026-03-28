@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+﻿cmake_minimum_required(VERSION 3.22)
 
 project(CLEAN_SLATE_EQ VERSION 0.0.1)
 
@@ -19,7 +19,7 @@ FetchContent_MakeAvailable(juce)
 # Create the plugin target
 juce_add_plugin(CLEAN_Slate_EQ
     VERSION 0.0.1
-    COMPANY_NAME "MosesMawela"
+    COMPANY_NAME "<developer>Mawela"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -30,7 +30,7 @@ juce_add_plugin(CLEAN_Slate_EQ
     FORMATS VST3 Standalone
     PRODUCT_NAME "CLEAN Slate EQ"
     JUCE_MANUFACTURER_CODE "ClSt"
-    BUNDLE_ID "com.mosesmawela.cleanslateeq"
+    BUNDLE_ID "com.<developer>mawela.cleanslateeq"
     VST2_CATEGORY Vst2Category::kVST2CategoryEffect
 )
 
@@ -67,3 +67,4 @@ target_compile_features(CLEAN_Slate_EQ PRIVATE cxx_std_17)
 
 # Position independent code for VST3
 set_target_properties(CLEAN_Slate_EQ PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+

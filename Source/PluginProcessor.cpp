@@ -67,7 +67,19 @@ CleanSlateAudioProcessor::CleanSlateAudioProcessor()
     filtersDirty = true;
 }
 
-CleanSlateAudioProcessor::~CleanSlateAudioProcessor() {}
+CleanSlateAudioProcessor::~CleanSlateAudioProcessor()
+{
+    // Ensure all resources are properly released
+    bufL.clear();
+    bufR.clear();
+    stereoBuffer.clear();
+    blockL.reset();
+    blockR.reset();
+    stereoBlock.reset();
+    ctxL.reset();
+    ctxR.reset();
+    ctxStereo.reset();
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout CleanSlateAudioProcessor::createParameterLayout()
 {
@@ -762,17 +774,31 @@ void CleanSlateAudioProcessor::processWithLinearPhase (juce::AudioBuffer<float>&
     auto* leftData = buffer.getWritePointer(0);
     auto* rightData = buffer.getWritePointer(1);
 
+    // Validate pointers before processing
+    if (leftData == nullptr || rightData == nullptr)
+        return;
+
     // Process left channel
     processLinearPhaseChannel(leftData, impulseResponseL, convolutionBufferL, convolutionIndex, numSamples);
-    
+
     // Process right channel
     processLinearPhaseChannel(rightData, impulseResponseR, convolutionBufferR, convolutionIndex, numSamples);
-    
+
     // Update convolution index
     convolutionIndex = (convolutionIndex + numSamples) & (linearPhaseFFTSize - 1);
 }
 
 void CleanSlateAudioProcessor::releaseResources () {}
+
+int CleanSlateAudioProcessor::getLatencySamples() const
+{
+    // Linear phase introduces latency based on FFT size
+    if (phaseMode == PhaseMode::LinearPhase)
+        return linearPhaseFFTSize / 2;
+    
+    // Other modes are zero latency
+    return 0;
+}
 
 bool CleanSlateAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -985,7 +1011,8 @@ void CleanSlateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             {
                 auto* scLeft = buffer.getReadPointer (2);
                 auto* scRight = buffer.getReadPointer (3);
-                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                int samplesToCopy = juce::jmin(buffer.getNumSamples(), sidechainBuffer.getNumSamples());
+                for (int i = 0; i < samplesToCopy; ++i)
                 {
                     sidechainBuffer.setSample (0, i, scLeft[i]);
                     sidechainBuffer.setSample (1, i, scRight[i]);
@@ -1005,10 +1032,11 @@ void CleanSlateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // Handle A/B switching
     abEnabled = (treeState.getRawParameterValue ("abEnabled")->load () > 0.5f);
     abSwap = (treeState.getRawParameterValue ("abSwap")->load () > 0.5f);
-    
+
     // Store A/B states if enabled
     if (abEnabled && buffer.getNumChannels() >= 2)
     {
+        int samplesToCopy = juce::jmin(buffer.getNumSamples(), abBufferL.getNumSamples());
         if (abSwap)
         {
             // Swap A and B - copy current buffer to B, then copy B to A
@@ -1016,23 +1044,26 @@ void CleanSlateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             auto* bufRight = buffer.getWritePointer (1);
             auto* abLeft = abBufferL.getWritePointer (0);
             auto* abRight = abBufferR.getWritePointer (0);
-            
-            // Copy current to temp
-            std::vector<float> tempL(bufLeft, bufLeft + buffer.getNumSamples());
-            std::vector<float> tempR(bufRight, bufRight + buffer.getNumSamples());
-            
-            // Copy B to A
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
+
+            if (bufLeft && bufRight && abLeft && abRight)
             {
-                bufLeft[i] = abBufferL.getReadPointer (0)[i];
-                bufRight[i] = abBufferR.getReadPointer (0)[i];
-            }
-            
-            // Copy temp (original A) to B
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
-            {
-                abBufferL.getWritePointer (0)[i] = tempL[i];
-                abBufferR.getWritePointer (0)[i] = tempR[i];
+                // Copy current to temp
+                std::vector<float> tempL(bufLeft, bufLeft + samplesToCopy);
+                std::vector<float> tempR(bufRight, bufRight + samplesToCopy);
+
+                // Copy B to A
+                for (int i = 0; i < samplesToCopy; ++i)
+                {
+                    bufLeft[i] = abLeft[i];
+                    bufRight[i] = abRight[i];
+                }
+
+                // Copy temp (original A) to B
+                for (int i = 0; i < samplesToCopy; ++i)
+                {
+                    abLeft[i] = tempL[i];
+                    abRight[i] = tempR[i];
+                }
             }
         }
         else
@@ -1042,26 +1073,33 @@ void CleanSlateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             auto* bufRight = buffer.getReadPointer (1);
             auto* abLeft = abBufferL.getWritePointer (0);
             auto* abRight = abBufferR.getWritePointer (0);
-            
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
+
+            if (bufLeft && bufRight && abLeft && abRight)
             {
-                abLeft[i] = bufLeft[i];
-                abRight[i] = bufRight[i];
+                for (int i = 0; i < samplesToCopy; ++i)
+                {
+                    abLeft[i] = bufLeft[i];
+                    abRight[i] = bufRight[i];
+                }
             }
         }
     }
     else if (abEnabled && !abSwap && buffer.getNumChannels() >= 2)
     {
         // Apply B state if we have one stored
+        int samplesToCopy = juce::jmin(buffer.getNumSamples(), abBufferL.getNumSamples());
         auto* bufLeft = buffer.getWritePointer (0);
         auto* bufRight = buffer.getWritePointer (1);
         auto* abLeft = abBufferL.getReadPointer (0);
         auto* abRight = abBufferR.getReadPointer (0);
-        
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
+
+        if (bufLeft && bufRight && abLeft && abRight)
         {
-            bufLeft[i] = abLeft[i];
-            bufRight[i] = abRight[i];
+            for (int i = 0; i < samplesToCopy; ++i)
+            {
+                bufLeft[i] = abLeft[i];
+                bufRight[i] = abRight[i];
+            }
         }
     }
 

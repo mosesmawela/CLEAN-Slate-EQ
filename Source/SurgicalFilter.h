@@ -34,17 +34,17 @@ public:
         this->isDynamic = isDynamic;
         this->charMode = character;
         
-        targetThreshold = threshold;
-        targetRatio = ratio;
-        
-        // slopeIndex: 0=6s, 1=12s, 2=24s, 3=48s, 4=96s
+        // slopeIndex: 0=6dB, 1=12dB, 2=24dB, 3=48dB, 4=96dB
         int oldStages = stages;
+        bool oldIsFirstOrder = isFirstOrder;
+        
+        isFirstOrder = (slopeIndex == 0);
         stages = 1;
         if (slopeIndex == 2) stages = 2;
         else if (slopeIndex == 3) stages = 4;
         else if (slopeIndex == 4) stages = 8;
 
-        if (paramsChanged || stages != oldStages)
+        if (paramsChanged || stages != oldStages || isFirstOrder != oldIsFirstOrder)
         {
             lastGain = -999.0f; // Force update
             updateCoefficients (currentGain);
@@ -54,38 +54,16 @@ public:
     template <typename ProcessContext>
     void process (const ProcessContext& context) noexcept
     {
-        auto inputBlock = context.getInputBlock();
-        auto outputBlock = context.getOutputBlock();
-        
-        if (isDynamic)
-        {
-            float maxEnv = 0.0f;
-            for (size_t chan = 0; chan < inputBlock.getNumChannels(); ++chan)
-            {
-                auto* src = inputBlock.getChannelPointer (chan);
-                for (size_t i = 0; i < inputBlock.getNumSamples(); ++i)
-                    maxEnv = std::max (maxEnv, std::abs (src[i]));
-            }
-            
-            float envDb = juce::Decibels::gainToDecibels (maxEnv);
-            if (envDb > targetThreshold)
-            {
-                float over = envDb - targetThreshold;
-                float reduction = over * (1.0f - (1.0f / targetRatio));
-                updateCoefficients (currentGain - reduction);
-            }
-            else
-            {
-                updateCoefficients (currentGain);
-            }
-        }
+        // Internal dynamic EQ logic removed as it's now handled in PluginProcessor 
+        // per-sample for better accuracy.
 
         for (int i = 0; i < stages; ++i)
             cascade[i].process (context);
 
-        // Saturation
+        // Saturation (Post-filter)
         if (charMode > 0)
         {
+            auto outputBlock = context.getOutputBlock();
             for (size_t chan = 0; chan < outputBlock.getNumChannels(); ++chan)
             {
                 auto* dst = outputBlock.getChannelPointer (chan);
@@ -110,22 +88,36 @@ public:
 private:
     void updateCoefficients (float gain)
     {
-        if (std::abs (gain - lastGain) < 0.01f) return;
+        if (std::abs (gain - lastGain) < 0.001f) return;
         lastGain = gain;
 
         auto g = juce::Decibels::decibelsToGain (gain);
         juce::ReferenceCountedObjectPtr<juce::dsp::IIR::Coefficients<float>> coeffs;
 
-        switch (currentType)
+        if (isFirstOrder)
         {
-            case Peak:      coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate, currentFreq, currentQ, g); break;
-            case LowShelf:  coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sampleRate, currentFreq, currentQ, g); break;
-            case HighShelf: coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sampleRate, currentFreq, currentQ, g); break;
-            case Notch:     coeffs = juce::dsp::IIR::Coefficients<float>::makeNotch (sampleRate, currentFreq, currentQ); break;
-            case HighPass:  coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, currentFreq, currentQ); break;
-            case LowPass:   coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, currentFreq, currentQ); break;
-            case AllPass:   coeffs = juce::dsp::IIR::Coefficients<float>::makeAllPass (sampleRate, currentFreq, currentQ); break;
-            default:        coeffs = juce::dsp::IIR::Coefficients<float>::makeAllPass (sampleRate, currentFreq, currentQ); break;
+            // 6dB/oct slopes (1st order)
+            switch (currentType)
+            {
+                case HighPass: coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sampleRate, currentFreq); break;
+                case LowPass:  coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass (sampleRate, currentFreq); break;
+                default:       coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate, currentFreq, currentQ, g); break;
+            }
+        }
+        else
+        {
+            // 12dB/oct base slopes (2nd order)
+            switch (currentType)
+            {
+                case Peak:      coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate, currentFreq, currentQ, g); break;
+                case LowShelf:  coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sampleRate, currentFreq, currentQ, g); break;
+                case HighShelf: coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sampleRate, currentFreq, currentQ, g); break;
+                case Notch:     coeffs = juce::dsp::IIR::Coefficients<float>::makeNotch (sampleRate, currentFreq, currentQ); break;
+                case HighPass:  coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, currentFreq, currentQ); break;
+                case LowPass:   coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, currentFreq, currentQ); break;
+                case AllPass:   coeffs = juce::dsp::IIR::Coefficients<float>::makeAllPass (sampleRate, currentFreq, currentQ); break;
+                default:        coeffs = juce::dsp::IIR::Coefficients<float>::makeAllPass (sampleRate, currentFreq, currentQ); break;
+            }
         }
 
         if (coeffs)
@@ -138,13 +130,13 @@ private:
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>> cascade[8];
     double sampleRate = 44100.0;
     int stages = 1;
+    bool isFirstOrder = false;
     int currentType = Peak;
     float currentFreq = 1000.0f, currentQ = 0.707f, currentGain = 0.0f;
     float lastGain = -999.0f;
     
     // Dynamic Params
     bool isDynamic = false;
-    float targetThreshold = 0.0f, targetRatio = 1.0f;
     int charMode = 0;
     
     // Placeholder for smoothing or just use LinearSmoothedValue

@@ -48,6 +48,7 @@ struct EqGraphComponent : public juce::Component
     CleanSlateAudioProcessor& processor;
     int hoveredBand = -1;
     int draggingBand = -1;
+    bool undoTransactionStarted = false;
     juce::Point<float> ghostPos;
 
     // EQ Sketch

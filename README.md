@@ -1,4 +1,4 @@
-# CLEAN Slate EQ (Pro Surgical Build Experiment v2.0)
+﻿# CLEAN Slate EQ (Pro Surgical Build Experiment v2.0)
 
 ![CLEAN Slate EQ](https://img.shields.io/badge/Status-Pro--Experimental-gold) ![JUCE](https://img.shields.io/badge/Powered%20By-JUCE-blue) ![C++](https://img.shields.io/badge/Language-C%2B%2B-orange)
 
@@ -7,7 +7,7 @@ CLEAN Slate EQ v2.0 is a professional-grade, surgical audio plugin that transfor
 
 ---
 
-## 🚀 Pro Features
+## ðŸš€ Pro Features
 
 ### 1. **Interactive EQ Graph (Pro-Q Logic)**
 - **Direct Manipulation**: Double-click to create bands, drag to adjust frequency and gain, and use the mouse wheel for Q factor control.
@@ -26,7 +26,7 @@ CLEAN Slate EQ v2.0 is a professional-grade, surgical audio plugin that transfor
 
 ---
 
-## ⚡ Coming Soon (Roadmap)
+## âš¡ Coming Soon (Roadmap)
 
 The project will be updated over time with advanced "Surgical AI" features:
 - **Res-Kill (Auto-Notch)**: Intelligent FFT-based harshness detection.
@@ -35,13 +35,13 @@ The project will be updated over time with advanced "Surgical AI" features:
 
 ---
 
-## 🛠 Build Instructions (Visual Studio 2022)
+## ðŸ›  Build Instructions (Visual Studio 2022)
 
 This project uses **CMake** and the **JUCE** framework.
 
 1. **Clone the Repo**:
    ```bash
-   git clone https://github.com/MosesMawela/CLEAN-Slate-EQ.git
+   git clone https://github.com/<username>/CLEAN-Slate-EQ.git
    ```
 2. **Open in Visual Studio**: Open the root folder in VS 2022.
 3. **Configure CMake**:
@@ -51,12 +51,14 @@ This project uses **CMake** and the **JUCE** framework.
 
 ---
 
-## ⚙️ Requirements
+## âš™ï¸ Requirements
 - **OS**: Windows (x64)
 - **Host**: VST3 compatible DAW
 - **C++ Standard**: C++17 or higher
 
 ---
 
-*Developed by **Anti-Gravity / Moses Mawela***  
+*Developed by **<ProjectName>** Team*  
 *This project is an ongoing build experiment.*
+
+
